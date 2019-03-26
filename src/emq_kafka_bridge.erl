@@ -59,38 +59,36 @@ load(Env) ->
 
 on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId, username = Username}, _Env) ->
     % io:format("client ~s/~s will connected: ~w.~n", [ClientId, Username, ConnAck]),
-    Event = [{action, <<"connected">>},
-                {clientid, ClientId},
+    Event = [{clientid, ClientId},
                 {username, Username},
-                {result, ConnAck}],
+                {ts, timestamp()}],
     produce_kafka_connected(Event),
     {ok, Client}.
 
 on_client_disconnected(Reason, _Client = #mqtt_client{client_id = ClientId, username = Username}, _Env) ->
     % io:format("client ~s/~s will connected: ~w~n", [ClientId, Username, Reason]),
-    Event = [{action, <<"disconnected">>},
-                {clientid, ClientId},
+    Event = [{clientid, ClientId},
                 {username, Username},
-                {result, Reason}],
+                {ts, timestamp()}],
     produce_kafka_disconnected(Event),
     ok.
 
 
 on_client_subscribe(ClientId, Username, TopicTable, _Env) ->
     % io:format("client(~s/~s) will subscribe: ~p~n", [Username, ClientId, TopicTable]),
-    Event = [{action, <<"subscribe">>},
-                {clientid, ClientId},
+    Event = [{clientid, ClientId},
                 {username, Username},
-                {topic, TopicTable}],
+                {topic, TopicTable},
+                {ts, timestamp()}],
     produce_kafka_subscribe(Event),
     {ok, TopicTable}.
     
 on_client_unsubscribe(ClientId, Username, TopicTable, _Env) ->
     % io:format("client(~s/~s) unsubscribe ~p~n", [ClientId, Username, TopicTable]),
-    Event = [{action, <<"unsubscribe">>},
-                {clientid, ClientId},
+    Event = [{clientid, ClientId},
                 {username, Username},
-                {topic, TopicTable}],
+                {topic, TopicTable},
+                {ts, timestamp()}],
     produce_kafka_unsubscribe(Event),
     {ok, TopicTable}.
 
@@ -128,12 +126,11 @@ on_message_publish(Message, _Env) ->
 
 on_message_delivered(ClientId, Username, Message, _Env) ->
     % io:format("delivered to client(~s/~s): ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
-    Event = [{action, <<"delivered">>},
-                {clientid, ClientId},
+    Event = [{clientid, ClientId},
                 {username, Username},
                 {topic, Message#mqtt_message.topic},
-                {qos, Message#mqtt_message.qos},
-                {message, Message#mqtt_message.payload}],
+                {size, byte_size(Message#mqtt_message.payload)},
+                {ts, emqttd_time:now_secs(Message#mqtt_message.timestamp)}],
     produce_kafka_delivered(Event),
     {ok, Message}.
 
@@ -189,11 +186,11 @@ ekaf_init(_Env) ->
 
 format_payload(Message) ->
     {ClientId, Username} = format_from(Message#mqtt_message.from),
-    Payload = [{action, <<"message_publish">>},
-                  {clientid, ClientId},
+    Payload = [{clientid, ClientId},
                   {username, Username},
                   {topic, Message#mqtt_message.topic},
                   {payload, Message#mqtt_message.payload},
+                  {size, byte_size(Message#mqtt_message.payload)},
                   {ts, emqttd_time:now_secs(Message#mqtt_message.timestamp)}],
     {ok, Payload}.
 
@@ -300,3 +297,7 @@ produce_kafka_delivered(Message) ->
     % ok = ekaf:produce_async(Topic, Payload),
     ok = ekaf:produce_async(list_to_binary(Topic), Payload),
     ok.
+
+timestamp() ->
+    {M, S, _} = os:timestamp(),
+    M * 1000000 + S.
