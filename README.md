@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # EMQ emq\_kafka\_bridge编译流程
 
 * **OS system version: centos-7.2**
