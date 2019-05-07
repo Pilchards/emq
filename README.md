@@ -71,11 +71,11 @@ https://git.ucloudadmin.com/uiot/emq\_kafka\_bridge.git
 
 启动emq以及载入插件:
 
-    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd start 
+    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd start;
     /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd_ctl plugins load emq_kafka_bridge
 
 卸载插件以及关闭emq:
   
-    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd_ctl plugins unload emq_kafka_bridge
-    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd sto
+    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd_ctl plugins unload emq_kafka_bridge;
+    /root/emqx-rel-2.3.11/_rel/emqttd/bin/emqttd stop
 

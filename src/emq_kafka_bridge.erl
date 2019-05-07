@@ -19,9 +19,11 @@
 -module(emq_kafka_bridge).
 
 -include("emq_kafka_bridge.hrl").
+-include("id_generate_constants.hrl").
 
 -include_lib("emqttd/include/emqttd.hrl").
 
+%add
 -import(string,[concat/2]).
 -import(lists,[nth/2]). 
 
@@ -37,8 +39,13 @@
 
 % -export([on_message_publish/2]).
 
-% -export([on_message_publish/2, on_message_delivered/4, on_message_acked/4]).
--export([on_message_publish/2, on_message_delivered/4]).
+-export([on_message_publish/2, on_message_delivered/4, on_message_acked/4]).
+% -export([on_message_publish/2, on_message_delivered/4]).
+
+% -export([gen/0, new/0, timestamp/1]).
+
+% -define(MAX_SEQ, 16#FFFF).
+
 
 
 %% Called when the plugin application start
@@ -53,8 +60,8 @@ load(Env) ->
     % emqttd:hook('session.unsubscribed', fun ?MODULE:on_session_unsubscribed/4, [Env]),
     % emqttd:hook('session.terminated', fun ?MODULE:on_session_terminated/4, [Env]),
     emqttd:hook('message.publish', fun ?MODULE:on_message_publish/2, [Env]),
-    emqttd:hook('message.delivered', fun ?MODULE:on_message_delivered/4, [Env]).
-    % emqttd:hook('message.acked', fun ?MODULE:on_message_acked/4, [Env]).
+    emqttd:hook('message.delivered', fun ?MODULE:on_message_delivered/4, [Env]),
+    emqttd:hook('message.acked', fun ?MODULE:on_message_acked/4, [Env]).
 
 
 on_client_connected(ConnAck, Client = #mqtt_client{client_id = ClientId, username = Username}, _Env) ->
@@ -122,7 +129,13 @@ on_message_publish(Message = #mqtt_message{topic = <<"$SYS/", _/binary>>}, _Env)
 on_message_publish(Message, _Env) ->
     {ok, Payload} = format_payload(Message),
     produce_kafka_publish(Payload), 
-    {ok, Message}.
+
+    %add
+    {_, Value} = lists:nth(4, Payload),
+
+
+    Msg = Message#mqtt_message{payload = Value},
+    {ok, Msg}.
 
 on_message_delivered(ClientId, Username, Message, _Env) ->
     % io:format("delivered to client(~s/~s): ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
@@ -134,16 +147,16 @@ on_message_delivered(ClientId, Username, Message, _Env) ->
     produce_kafka_delivered(Event),
     {ok, Message}.
 
-% on_message_acked(ClientId, Username, Message, _Env) ->
-%     % io:format("client(~s/~s) acked: ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
-%     Event = [{action, <<"acked">>},
-%                 {from_client_id, ClientId},
-%                 {from_username, Username},
-%                 {topic, Message#mqtt_message.topic},
-%                 {qos, Message#mqtt_message.qos},
-%                 {message, Message#mqtt_message.payload}],
-%     produce_kafka_log(Event),
-%     {ok, Message}.
+on_message_acked(ClientId, Username, Message, _Env) ->
+    % io:format("client(~s/~s) acked: ~s~n", [Username, ClientId, emqttd_message:format(Message)]),
+    Event = [{action, <<"acked">>},
+                {from_client_id, ClientId},
+                {from_username, Username},
+                {topic, Message#mqtt_message.topic},
+                {qos, Message#mqtt_message.qos},
+                {message, Message#mqtt_message.payload}],
+    produce_kafka_publish(Event),
+    {ok, Message}.
 
 ekaf_init(_Env) ->
     {ok, BrokerValues} = application:get_env(emq_kafka_bridge, broker),
@@ -159,6 +172,14 @@ ekaf_init(_Env) ->
     KafkaSubscribeTopic = proplists:get_value(subscribetopic, BrokerValues),
     KafkaUnsubscribeTopic = proplists:get_value(unsubscribetopic, BrokerValues),
     KafkaDeliveredTopic = proplists:get_value(deliveredtopic, BrokerValues),
+
+    %add
+    % FluentdHost = proplists:get_value(fluentdhost, BrokerValues),
+    % FluentdPort = proplists:get_value(fluentdport, BrokerValues),
+    MessageHost = proplists:get_value(messagehost, BrokerValues),
+    MessagePort = proplists:get_value(messageport, BrokerValues),
+
+
     application:set_env(ekaf, ekaf_bootstrap_broker,  {KafkaHost, list_to_integer(KafkaPort)}),
     % application:set_env(ekaf, ekaf_bootstrap_topics,  [<<"Processing">>, <<"DeviceLog">>]),
     application:set_env(ekaf, ekaf_partition_strategy, KafkaPartitionStrategy),
@@ -175,6 +196,16 @@ ekaf_init(_Env) ->
     ets:insert(topic_table, {kafka_subscribe_topic, KafkaSubscribeTopic}),
     ets:insert(topic_table, {kafka_unsubscribe_topic, KafkaUnsubscribeTopic}),
     ets:insert(topic_table, {kafka_delivered_topic, KafkaDeliveredTopic}),
+    %add
+    % ets:insert(topic_table, {fluentd_host, FluentdHost}),
+    % ets:insert(topic_table, {fluentd_port, FluentdPort}),
+    ets:insert(topic_table, {message_host, MessageHost}),
+    ets:insert(topic_table, {message_port, MessagePort}),
+    % {ok, Socket} = gen_udp:open(0, [binary]),
+    % ets:insert(topic_table, {fluentd_socket, Socket}),
+    % {ok, _} = application:ensure_all_started(hackney),
+
+
     {ok, _} = application:ensure_all_started(gproc),
     {ok, _} = application:ensure_all_started(ekaf).
 
@@ -186,12 +217,43 @@ ekaf_init(_Env) ->
 
 format_payload(Message) ->
     {ClientId, Username} = format_from(Message#mqtt_message.from),
+
+    %add
+    % Method = get,
+    % URL = <<"https://baidu.com">>,
+    % Headers = [],
+    % PayloadBody = <<>>,
+    % Options = [],
+    % {ok, StatusCode, RespHeaders, ClientRef} = hackney:request(Method, URL,Headers, PayloadBody, Options),
+    % {ok, Body} = hackney:body(ClientRef),
+    % ContentLength = byte_size(Body),
+
+    Opts = [{framed, true}],
+    [{_, MessageHost}] = ets:lookup(topic_table, message_host),
+    [{_, MessagePort}] = ets:lookup(topic_table, message_port),
+    {ok, Client} = thrift_client_util:new(MessageHost, list_to_integer(MessagePort), generate_thrift, Opts),
+    % Req=#'example.Data'{text="hello"},
+    {ClientAgain, {ok, {ResponseName, ResponseValue}}} = thrift_client:call(Client, do_generate, []),
+    thrift_client:close(ClientAgain),
+    JsonPayload2 = #{<<"payload">> => Message#mqtt_message.payload, <<"message_id">> => ResponseValue},
+    % JsonPayload2 = #{<<"payload">> => Message#mqtt_message.payload, <<"message_id">> => Body},
+    % JsonPayload2 = #{<<"payload">> => Message#mqtt_message.payload, <<"message_id">> => timestamp()},
+    % JsonPayload2 = #{<<"payload">> => Message#mqtt_message.payload, <<"message_id">> => erlang:iolist_to_binary([protobuffs:encode(1, <<"Nick">>, string),protobuffs:encode(2, 25, uint32)])},
+    JsonPayload3 = jsx:encode(JsonPayload2),
     Payload = [{clientid, ClientId},
                   {username, Username},
                   {topic, Message#mqtt_message.topic},
-                  {payload, Message#mqtt_message.payload},
+                  {payload, JsonPayload3},
                   {size, byte_size(Message#mqtt_message.payload)},
                   {ts, emqttd_time:now_secs(Message#mqtt_message.timestamp)}],
+    % {ok, Socket} = gen_udp:open(0, [binary]),
+    % [{_, Host}] = ets:lookup(topic_table, fluentd_host),
+    % [{_, Port}] = ets:lookup(topic_table, fluentd_port),
+    % [{_, Socket}] = ets:lookup(topic_table, fluentd_socket),
+    % gen_udp:send(Socket, Host, list_to_integer(Port), <<"Hello,world">>),
+    % gen_udp:close(Socket), 
+
+
     {ok, Payload}.
 
 format_from({ClientId, Username}) ->
@@ -214,8 +276,8 @@ unload() ->
     % emqttd:unhook('session.unsubscribed', fun ?MODULE:on_session_unsubscribed/4),
     % emqttd:unhook('session.terminated', fun ?MODULE:on_session_terminated/4),
     emqttd:unhook('message.publish', fun ?MODULE:on_message_publish/2),
-    emqttd:unhook('message.delivered', fun ?MODULE:on_message_delivered/4).
-    %emqttd:unhook('message.acked', fun ?MODULE:on_message_acked/4).
+    emqttd:unhook('message.delivered', fun ?MODULE:on_message_delivered/4),
+    emqttd:unhook('message.acked', fun ?MODULE:on_message_acked/4).
 
 
 % produce_kafka_payload(Message) ->
@@ -298,6 +360,10 @@ produce_kafka_delivered(Message) ->
     ok = ekaf:produce_async(list_to_binary(Topic), Payload),
     ok.
 
+%add
 timestamp() ->
-    {M, S, _} = os:timestamp(),
-    M * 1000000 + S.
+    Ms = erlang:system_time(millisecond),
+    Ran = random:uniform(99999999),
+    list_to_binary(io_lib:format("~p", [Ms * 100000000 + Ran])).
+
+

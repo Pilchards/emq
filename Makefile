@@ -2,11 +2,11 @@ PROJECT = emq_kafka_bridge
 PROJECT_DESCRIPTION = EMQ Kafka Bridge
 PROJECT_VERSION = 2.3.11
 
-DEPS = ekaf
+DEPS = ekaf thrift
 dep_ekaf = git https://github.com/helpshift/ekaf master
+dep_thrift = git https://github.com/Pilchards/thrift master
 
-
-BUILD_DEPS = emqttd cuttlefish
+BUILD_DEPS = emqttd cuttlefish 
 dep_emqttd = git https://github.com/emqtt/emqttd master
 dep_cuttlefish = git https://github.com/emqtt/cuttlefish
 
